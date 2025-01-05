@@ -14,7 +14,7 @@ from tqdm import tqdm
 from scipy.spatial.distance import jensenshannon
 from skimage.metrics import peak_signal_noise_ratio as psnr
 from skimage.metrics import structural_similarity as ssim
-
+from scipy.special import entr
 
 # Função para carregar imagens do BSDS500
 def load_images_from_folder(folder):
@@ -123,40 +123,72 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
         # Salvar checkpoint
         save_checkpoint(model, optimizer, epoch, 'checkpoint.pth')
 
-# Funções para Distâncias Estocásticas
-def kullback_leibler_divergence(p, q):
-    return entropy(p.flatten(), q.flatten())
-
-def renyi_divergence(p, q, alpha=0.5):
+# Função para verificar se as distribuições estão normalizadas
+def normalize(p, q):
     p = np.asarray(p).flatten()
     q = np.asarray(q).flatten()
-    return (1 / (alpha - 1)) * np.log(np.sum(p**alpha * q**(1 - alpha)))
+    p_sum = np.sum(p)
+    q_sum = np.sum(q)
+    if p_sum > 0:
+        p /= p_sum
+    if q_sum > 0:
+        q /= q_sum
+    return p, q
 
+# Função para calcular a Divergência de Kullback-Leibler
+def kullback_leibler_divergence(p, q):
+    p, q = normalize(p, q)
+    return entropy(p, q)
+
+# Função para calcular a Divergência de Renyi
+def renyi_divergence(p, q, alpha=0.5):
+    p, q = normalize(p, q)
+    p = np.asarray(p).flatten() + 1e-10  # Suavização
+    q = np.asarray(q).flatten() + 1e-10
+    if alpha <= 0 or alpha == 1:
+        raise ValueError("Alpha must be greater than 0 and not equal to 1.")
+    return (1 / (alpha - 1)) * np.log(np.sum(p**alpha * q**(1 - alpha)) + 1e-10)
+
+# Função para calcular a Distância de Hellinger
 def hellinger_distance(p, q):
+    p, q = normalize(p, q)
     return euclidean(np.sqrt(p), np.sqrt(q)) / np.sqrt(2)
 
+# Função para calcular a Distância de Bhattacharyya
 def bhattacharyya_distance(p, q):
-    return -np.log(np.sum(np.sqrt(p * q)))
+    p, q = normalize(p, q)
+    p = np.asarray(p).flatten() + 1e-10  # Suavização
+    q = np.asarray(q).flatten() + 1e-10
+    return -np.log(np.sum(np.sqrt(p * q)) + 1e-10)
 
+# Função para calcular a Divergência de Jensen-Shannon
 def jensen_shannon_divergence(p, q):
+    p, q = normalize(p, q)
     return jensenshannon(p, q)
 
+# Função para calcular a Distância Aritmético-Geometrica
 def arithmetic_geometric_distance(p, q):
+    p, q = normalize(p, q)
     p = np.asarray(p).flatten()
     q = np.asarray(q).flatten()
     arithmetic_mean = (p + q) / 2
     geometric_mean = np.sqrt(p * q)
-    return np.sum(arithmetic_mean - geometric_mean)
+    return np.sum(np.abs(arithmetic_mean - geometric_mean) + 1e-10)
 
+# Função para calcular a Distância Triangular
 def triangular_distance(p, q):
-    p = np.asarray(p).flatten()
-    q = np.asarray(q).flatten()
-    return np.sum((p - q)**2 / (p + q))
+    p, q = normalize(p, q)
+    p = np.asarray(p).flatten() + 1e-10  # Suavização
+    q = np.asarray(q).flatten() + 1e-10
+    return np.sum((p - q)**2 / (p + q) + 1e-10)
 
+# Função para calcular a Distância Média Harmônica
 def harmonic_mean_distance(p, q):
-    p = np.asarray(p).flatten()
-    q = np.asarray(q).flatten()
-    return np.sum((2 * p * q) / (p + q))
+    p, q = normalize(p, q)
+    p = np.asarray(p).flatten() + 1e-10  # Suavização
+    q = np.asarray(q).flatten() + 1e-10
+    return np.sum((2 * p * q) / (p + q) + 1e-10)
+
 
 # Função para salvar o checkpoint
 def save_checkpoint(model, optimizer, epoch, filepath):
