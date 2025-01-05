@@ -75,7 +75,13 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
 
             optimizer.zero_grad()
             outputs = model(noisy)
-            loss = criterion(outputs, clean)
+
+            # Calcular as distribuições p e q
+            p = clean.flatten().cpu().numpy() + 1e-10  # Evitar divisão por zero
+            q = outputs.detach().flatten().cpu().numpy() + 1e-10
+            
+            # Calcular a perda composta
+            loss = combined_loss(outputs, clean, p, q)
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * noisy.size(0)
@@ -92,24 +98,28 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
             for noisy, clean in val_loader:
                 noisy, clean = noisy.to(device), clean.to(device)
                 outputs = model(noisy)
-                loss = criterion(outputs, clean)
+
+                # Calcular as distribuições p e q
+                p = clean.flatten().cpu().numpy() + 1e-10
+                q = outputs.flatten().cpu().numpy() + 1e-10
+
+                loss = combined_loss(outputs, clean, p, q)
                 val_loss += loss.item() * noisy.size(0)
 
                 # Cálculo de PSNR e SSIM
                 clean_np = clean.squeeze().cpu().numpy()
                 outputs_np = outputs.squeeze().cpu().numpy()
-               
                 for c_img, o_img in zip(clean_np, outputs_np):
-                    psnr_values.append(psnr(c_img, o_img, data_range=1.0))  # Normalização já realizada
+                    psnr_values.append(psnr(c_img, o_img, data_range=1.0))
                     ssim_values.append(ssim(c_img, o_img, data_range=1.0))
 
         val_loss /= len(val_loader.dataset)
         avg_psnr = np.mean(psnr_values)
         avg_ssim = np.mean(ssim_values)
-       
+
         print(f'Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, '
               f'PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}')
-
+        
         # Salvar checkpoint
         save_checkpoint(model, optimizer, epoch, 'checkpoint.pth')
 
@@ -164,6 +174,19 @@ def load_checkpoint(filepath, model, optimizer):
     optimizer.load_state_dict(state['optimizer_state_dict'])
     return state['epoch']
 
+# Função de perda composta
+def combined_loss(output, target, p, q, alpha=0.5, beta=0.3, gamma=0.2):
+    mse_loss = nn.MSELoss()(output, target)
+    
+    # Cálculo das distâncias
+    kl_loss = kullback_leibler_divergence(p, q)
+    hellinger_loss = hellinger_distance(p, q)
+    js_loss = jensen_shannon_divergence(p, q)
+    
+    # Combine as perdas
+    total_loss = mse_loss + alpha * kl_loss + beta * hellinger_loss + gamma * js_loss
+    return total_loss
+
 
 # Função Principal
 def main():
@@ -213,7 +236,7 @@ def main():
     # Avaliação com distâncias estocásticas
     model.eval()
     random_index = random.randint(0, len(val_dataset) - 1)
-    noisy_sample, original_sample = val_dataset[0]
+    noisy_sample, original_sample = val_dataset[1]
     noisy_sample = noisy_sample.unsqueeze(0).to(device)
     original_sample = original_sample.squeeze(0).cpu().numpy()
 
