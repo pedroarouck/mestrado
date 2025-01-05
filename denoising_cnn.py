@@ -12,6 +12,8 @@ from scipy.spatial.distance import euclidean
 import random
 from tqdm import tqdm
 from scipy.spatial.distance import jensenshannon
+from skimage.metrics import peak_signal_noise_ratio as psnr
+from skimage.metrics import structural_similarity as ssim
 
 
 # Função para carregar imagens do BSDS500
@@ -66,6 +68,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
     for epoch in range(num_epochs):
         model.train()
         train_loss = 0
+
+        # Etapa de treinamento
         for noisy, clean in tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs}', leave=False):
             noisy, clean = noisy.to(device), clean.to(device)
 
@@ -78,8 +82,12 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
 
         train_loss /= len(train_loader.dataset)
 
+        # Etapa de validação
         model.eval()
         val_loss = 0
+        psnr_values = []
+        ssim_values = []
+
         with torch.no_grad():
             for noisy, clean in val_loader:
                 noisy, clean = noisy.to(device), clean.to(device)
@@ -87,9 +95,21 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
                 loss = criterion(outputs, clean)
                 val_loss += loss.item() * noisy.size(0)
 
-        val_loss /= len(val_loader.dataset)
+                # Cálculo de PSNR e SSIM
+                clean_np = clean.squeeze().cpu().numpy()
+                outputs_np = outputs.squeeze().cpu().numpy()
+               
+                for c_img, o_img in zip(clean_np, outputs_np):
+                    psnr_values.append(psnr(c_img, o_img, data_range=1.0))  # Normalização já realizada
+                    ssim_values.append(ssim(c_img, o_img, data_range=1.0))
 
-        print(f'Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
+        val_loss /= len(val_loader.dataset)
+        avg_psnr = np.mean(psnr_values)
+        avg_ssim = np.mean(ssim_values)
+       
+        print(f'Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, '
+              f'PSNR: {avg_psnr:.4f}, SSIM: {avg_ssim:.4f}')
+
         # Salvar checkpoint
         save_checkpoint(model, optimizer, epoch, 'checkpoint.pth')
 
@@ -144,6 +164,7 @@ def load_checkpoint(filepath, model, optimizer):
     optimizer.load_state_dict(state['optimizer_state_dict'])
     return state['epoch']
 
+
 # Função Principal
 def main():
     # Carregar imagens
@@ -156,7 +177,7 @@ def main():
     fraction = 0.1  # Use 10% do dataset original, por exemplo
     num_images = int(len(images_resized) * fraction)
     images_resized = images_resized[:num_images]
-    noisy_images = [add_speckle_noise(img) for img in images_resized]
+    noisy_images = [add_speckle_noise(img, variance=0.5) for img in images_resized]
 
     # Normalizar imagens
     images_resized = np.array(images_resized) / 255.0
@@ -170,7 +191,7 @@ def main():
     # Criar DataLoader
     train_dataset = ImageDataset(X_train, y_train)
     val_dataset = ImageDataset(X_val, y_val)
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)  # Use batch size menor
+    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)  
     val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
 
     # Preparar o modelo
@@ -192,7 +213,7 @@ def main():
     # Avaliação com distâncias estocásticas
     model.eval()
     random_index = random.randint(0, len(val_dataset) - 1)
-    noisy_sample, original_sample = val_dataset[random_index]
+    noisy_sample, original_sample = val_dataset[0]
     noisy_sample = noisy_sample.unsqueeze(0).to(device)
     original_sample = original_sample.squeeze(0).cpu().numpy()
 
@@ -206,21 +227,26 @@ def main():
     renyi = renyi_divergence(p, q)
     hellinger = hellinger_distance(p, q)
     bhattacharyya = bhattacharyya_distance(p, q)
-    #jensen_shannon = jensen_shannon_divergence(p, q)
+    jensen_shannon = jensen_shannon_divergence(p, q)
     
     arithmetic_geometric = arithmetic_geometric_distance(p, q)
     triangular = triangular_distance(p, q)
     harmonic_mean = harmonic_mean_distance(p, q) 
 
+    psnr_value = psnr(p, q, data_range=1.0)
+    ssim_value = ssim(p, q, data_range=1.0)
+
     print(f"KL Divergence: {kl_divergence}")
     print(f"Rényi Divergence: {renyi}")
     print(f"Hellinger Distance: {hellinger}")
     print(f"Bhattacharyya Distance: {bhattacharyya}")
-    #print(f"Jensen-Shannon Divergence: {jensen_shannon}")
+    print(f"Jensen-Shannon Divergence: {jensen_shannon}")
     
     print(f"Arithmetic-Geometric Distance: {arithmetic_geometric}")
     print(f"Triangular Distance: {triangular}")
     print(f"Harmonic Mean Distance: {harmonic_mean}") 
+
+    print(f"PSNR: {psnr_value:.4f}, SSIM: {ssim_value:.4f}")
 
     # Visualizar resultados
     plt.figure(figsize=(10, 4))
